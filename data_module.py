@@ -50,12 +50,11 @@ class DataGenGauss(object):
         pd = rv.pdf(pos)
         return cap * pd
     
-    
     def gen_data(self):
         for c in self.caps:
             layout = self._gauss(c)
             self.data.append(layout)
-    
+
     def save2dir(self, dir):
         if len(self.data) < len(self.caps):
             self.data=[]
@@ -66,6 +65,42 @@ class DataGenGauss(object):
             np.save(Path(dir + 'gauss_' + str(idx)), layout3d)
         return True
 
+class FGauess(object):
+    def __init__(self, caps, domain, mus, sigma):
+        self.caps = [sample(caps, len(caps)), sample(caps, len(caps)), 
+                            sample(caps, len(caps)), sample(caps, len(caps))]
+        self.domain = domain
+        self.mus = mus
+        self.sigma = sigma
+        self.data = []
+
+    def _gauss(self, cap, mu):
+        X, Y = self.domain.coordinate[0,:,:], self.domain.coordinate[1,:,:]
+        pos = np.empty(X.shape + (2,))
+        pos[:,:,0] = X
+        pos[:,:,1] = Y
+        rv = multivariate_normal(mu, self.sigma)
+        pd = rv.pdf(pos)
+        return cap * pd
+    
+    def gen_data(self):
+        for i in range(len(self.caps[0])):
+            f1 = self._gauss(self.caps[0][i], self.mus[0])
+            f2 = self._gauss(self.caps[1][i], self.mus[1])
+            f3 = self._gauss(self.caps[2][i], self.mus[2])
+            f4 = self._gauss(self.caps[3][i], self.mus[3])
+            layout = f1 + f2 + f3 + f4
+            self.data.append(layout)
+
+    def save2dir(self, dir):
+        if len(self.data) < len(self.caps):
+            self.data=[]
+            self.gen_data()
+        for idx, layout in enumerate(self.data):
+            layout = layout[np.newaxis, ...]
+            layout3d = np.concatenate((self.domain.coordinate, layout), axis=0)
+            np.save(Path(dir + 'fgauss_' + str(idx)), layout3d)
+        return True
 
 class LayoutDataset(Dataset):
 
@@ -148,23 +183,38 @@ if __name__ == '__main__':
     #         top=1,
     #         bottom=-1)
     # caps = list(np.arange(0, 2, 0.001))
-    # caps = sample(caps, len(caps))
+    # # caps = sample(caps, len(caps))
     # mu = [0.0, 0.0]
     # sigma = [[1e-4,0],[0,1e-4]]
     # singleWellDataGenerator = DataGenGauss(caps, domain, mu, sigma)
     # singleWellDataGenerator.save2dir("./data/case1/")
 
-    # Water Data:
+#   Four pumps green data 
     domain = SquareDomain_fd(    
-            dx=2.5, 
-            dy=2.5,
-            left=-500,
-            right=500,
-            top=500,
-            bottom=-500)
-    caps = list(np.arange(0, 20000, 10))
-    caps = sample(caps, len(caps))
-    mu = [0.0, 0.0]
-    sigma = [[1.56,0],[0,1.56]]
-    singleWellDataGenerator = DataGenGauss(caps, domain, mu, sigma)
-    singleWellDataGenerator.save2dir("./data/case2/")
+            dx=0.005, 
+            dy=0.005,
+            left=-1,
+            right=1,
+            top=1,
+            bottom=-1)
+    caps = list(np.arange(0, 2, 0.001))
+    # caps = sample(caps, len(caps))
+    mus = ([0.5, 0.5], [-0.5, -0.5], [-0.5, 0.5], [0.5, -0.5])
+    sigma = [[1e-4,0],[0,1e-4]]
+    FourWellsDataGenerator = FGauess(caps, domain, mus, sigma)
+    FourWellsDataGenerator.save2dir("./data/fourgreen/")
+
+    # Water Data:
+    # domain = SquareDomain_fd(    
+    #         dx=2.5, 
+    #         dy=2.5,
+    #         left=-500,
+    #         right=500,
+    #         top=500,
+    #         bottom=-500)
+    # caps = list(np.arange(0, 20000, 10))
+    # caps = sample(caps, len(caps))
+    # mu = [0.0, 0.0]
+    # sigma = [[1.56,0],[0,1.56]]
+    # singleWellDataGenerator = DataGenGauss(caps, domain, mu, sigma)
+    # singleWellDataGenerator.save2dir("./data/case2/")

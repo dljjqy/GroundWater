@@ -167,6 +167,38 @@ case5_params = {
     "mode":"fit"
 }
 
+# Four wells Green problem with Dirichlet
+case6_params = {
+    "pl_dataModule":DataModule(path = './data/fourgreen/',
+                               batch_size = 2),
+                               
+    "check_point": ModelCheckpoint(**{'monitor': 'Val L1 Loss', 
+                                      'mode': 'min', 
+                                      'every_n_train_steps': 0, 
+                                      'every_n_epochs': 1, 
+                                      'train_time_interval': None, 
+                                      'save_on_train_epoch_end': True}),
+
+    "pl_model": FiniteDiffModuleSoft( net = UNet(out_channels = 1,
+                                               in_channels = 3,
+                                               factor = 1),
+                                    loss = WeightedLoss(
+                                            diff_fun = F.l1_loss,
+                                            alpha = 10.0,
+                                            beta = 0.0),
+                                    fig_save_path = './u/case2/',
+                                    lr = 1e-3,
+                                    rhs = Dir_RHS(
+                                        k=1, h=0.005, value=0
+                                    )),
+    "gpus": 1,
+    "max_epochs": 80,
+    "precision": 32,
+    "check_val_every_n_epoch":1,
+    # "ckpt_path": "./lightning_logs/version_0/checkpoints/epoch=36-step=4587.ckpt",
+    "ckpt_path": False,
+    "mode":"fit"
+}
 def main(kwargs):
     # Initilize the Data Module
     dm = kwargs['pl_dataModule']
@@ -203,4 +235,4 @@ def main(kwargs):
     return True
 
 if __name__ == '__main__':
-    main(case5_params)
+    main(case6_params)
