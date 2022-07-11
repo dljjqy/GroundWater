@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from scipy.stats import multivariate_normal
 from data_module import SquareDomain_fd
 import numpy as np
+from scipy import sparse
 
 class Dir_RHS_Rec(torch.nn.Module):
     '''
@@ -29,7 +30,7 @@ class Dir_RHS_Rec(torch.nn.Module):
         v = F.pad(v, (1,1,1,1), mode='constant', value=self.value)
         v[..., 1:-1, 1:-1] = torch.conv2d(v, self.weight, bias=None, stride=1, padding=0)
 
-        cof = - self.h**2 / (self.k * 4)
+        cof = -self.h**2 / (self.k * 4)
         source = (cof * f)[..., 1:-1, 1:-1].detach()
         
         v[..., 1:-1, 1:-1] += source
@@ -158,6 +159,58 @@ def test_g(cap, a, h, ckpt_path, model, mean, sigma):
     # print(input.shape)
 
     return model(input).squeeze() 
+
+def test(cap, a, h, ckpt_path, model, loc):
+    sdm = SquareDomain_fd(
+        left = -a, right = a,
+        bottom = -a, top = a,
+        dx = h, dy = h)
+
+    X, Y = sdm.coordinate[0,:,:], sdm.coordinate[1,:,:]
+    layout = np.zeros_like(X)
+    Nx = round(loc[0] - sdm.left/sdm.dx)
+    Ny = round(loc[1] - sdm.right/sdm.dy) 
+    layout[Nx, Ny] += cap
+    layout = layout[np.newaxis, ...]
+
+    ckpt = torch.load(ckpt_path)
+    model.load_state_dict(ckpt['state_dict'])
+    model.freeze()
+
+    # print(pd.shape)
+    input = np.concatenate([sdm.coordinate, layout], axis=0)[np.newaxis, ...]
+    input = torch.Tensor(input)
+    # print(input.shape)
+
+    return model(input).squeeze() 
+
+def four_test(caps, a, h, ckpt_path, model, mus, sigma):
+    sdm = SquareDomain_fd(
+        left = -a, right = a,
+        bottom = -a, top = a,
+        dx = h, dy = h)
+
+    X, Y = sdm.coordinate[0,:,:], sdm.coordinate[1,:,:]
+    pos = np.empty(X.shape + (2,))
+    pos[:,:,0] = X
+    pos[:,:,1] = Y
+
+    pd = np.zeros_like(X)
+    for i in range(4):
+        rv = multivariate_normal(mus[i], sigma)
+        pd = pd + caps[i] * rv.pdf(pos)
+    pd = pd[np.newaxis, ...]
+
+    ckpt = torch.load(ckpt_path)
+    model.load_state_dict(ckpt['state_dict'])
+    model.freeze()
+
+    # print(pd.shape)
+    input = np.concatenate([sdm.coordinate, pd], axis=0)[np.newaxis, ...]
+    input = torch.Tensor(input)
+    # print(input.shape)
+
+    return model(input).squeeze()
 
 if __name__ == '__main__':
     from models import UNet, WeightedLoss
