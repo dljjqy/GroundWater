@@ -39,10 +39,10 @@ case1_params = {
 }
 
 case2_params = {
-    "pl_dataModule":LinalgDataModule('./b.npy', batch_size=1, h=0.002,
-            f = lambda x,y: 8*np.pi**2*np.sin(2*np.pi*x)*np.sin(2*np.pi*y),
-            u = lambda x,y: np.sin(2*np.pi*x)*np.sin(2*np.pi*y) ),
-    "check_point": ModelCheckpoint(**{'monitor': 'Val Real Loss', 
+    "pl_dataModule":LinalgDataModule(train_b='./B2nd.npy', train_u='./U2nd.npy', train_f='./F2nd.npy',
+                                     val_b='./ValB2nd.npy', val_u='./ValU2nd.npy', val_f='./ValF2nd.npy',
+                                    batch_size=2, N=128),
+    "check_point": ModelCheckpoint(**{'monitor': 'Val linalg Loss', 
                                       'mode': 'min', 
                                       'every_n_train_steps': 0, 
                                       'every_n_epochs': 1, 
@@ -51,15 +51,43 @@ case2_params = {
 
     "pl_model": LinalgTrainer(net = UNet(1, 3, 2),
                               loss = F.mse_loss,
-                              val_save_path='./u/lin5e-3/'),
+                              val_save_path='./u/lin1e-2/',
+                              A = './A2nd.npz',
+                              lr=1e-3),
     "gpus": 1,
-    "max_epochs": 80,
+    "max_epochs": 50,
     "precision": 32,
     "check_val_every_n_epoch":1,
-    # "ckpt_path": "./lightning_logs/version_0/checkpoints/epoch=36-step=4587.ckpt",
+    # "ckpt_path": "./lightning_logs/version_0/checkpoints/epoch=65-step=16368.ckpt",
     "ckpt_path": False,
     "mode":"fit"
 }
+
+case3_params = {
+    "pl_dataModule":LinalgDataModule(train_b='./B4th.npy', train_u='./U4th.npy', train_f='./F4th.npy',
+                                     val_b='./ValB4th.npy', val_u='./ValU4th.npy', val_f='./ValF4th.npy',
+                                    batch_size=2, N=128),
+    "check_point": ModelCheckpoint(**{'monitor': 'Val linalg Loss', 
+                                      'mode': 'min', 
+                                      'every_n_train_steps': 0, 
+                                      'every_n_epochs': 1, 
+                                      'train_time_interval': None, 
+                                      'save_on_train_epoch_end': True}),
+
+    "pl_model": LinalgTrainer(net = UNet(1, 3, 2),
+                              loss = F.mse_loss,
+                              val_save_path='./u/lin1e-2/',
+                              A = './A4th.npz',
+                              lr=1e-3),
+    "gpus": 1,
+    "max_epochs": 70,
+    "precision": 32,
+    "check_val_every_n_epoch":1,
+    # "ckpt_path": "./lightning_logs/version_0/checkpoints/epoch=65-step=16368.ckpt",
+    "ckpt_path": False,
+    "mode":"fit"
+}
+
 def main(kwargs):
     # Initilize the Data Module
     dm = kwargs['pl_dataModule']
@@ -96,4 +124,4 @@ def main(kwargs):
     return True
 
 if __name__ == '__main__':
-    main(case2_params)
+    main(case3_params)

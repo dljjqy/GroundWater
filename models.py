@@ -275,10 +275,10 @@ class TruncateLoss(torch.nn.Module):
         return torch.mean(torch.abs(weight * (inputs - targets)))
 
 if __name__ == '__main__':
-    x = torch.rand((4,3,400,400)).requires_grad_()
+    x = torch.rand((4,3,32,32)).requires_grad_()
     # y = torch.zeros((4, 1, 400, 400)).requires_grad_()
 
-    # net = AttUNet()
-    net = UNet()
+    net = AttUNet()
+    # net = UNet()
     y = net(x)
     print(y.shape)

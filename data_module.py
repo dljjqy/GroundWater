@@ -1,3 +1,4 @@
+from matplotlib.pyplot import axis
 import numpy as np
 import torch
 import pytorch_lightning as pl
@@ -10,7 +11,8 @@ from tqdm import tqdm
 
 
 def np2torch(A_path):
-    A = sparse.load_npz(A_path) 
+    A = sparse.load_npz(A_path)
+    # A = A.todense()
     values = A.data
     indices = np.vstack((A.row, A.col))
     
@@ -18,56 +20,52 @@ def np2torch(A_path):
     v = torch.FloatTensor(values)
     shape = A.shape
     return torch.sparse.FloatTensor(i, v, torch.Size(shape)).to(torch.float32)
-
+    # return torch.from_numpy(A).to(torch.float32)
 class LinalgDataset(Dataset):
-    def __init__(self, path_b, Q ,f, u, h=0.005, a=1, mode='fit'):
-        '''
-        It is only for homogeneous boundary condition.
-        '''
-        super().__init__()
-        self.f = f
-        self.u = u
-        self.Q = sample(Q, len(Q))
-        self.b = np.load(path_b)
+    def __init__(self, path_b, path_u, path_f, N=128, a=1, mode='fit'):
 
-        N = round(a/h) + 1
+        super().__init__()
         x = np.linspace(0, a, N)
         y = np.linspace(0, a, N)
-        self.xx, self.yy = np.meshgrid(x, y)
-    
+        xx, yy = np.meshgrid(x, y)
+        self.xx = xx[np.newaxis,...]
+        self.yy = yy[np.newaxis,...]
+
+        self.B = np.load(path_b)
+        self.U = np.load(path_u)
+        self.F = np.load(path_f)
+
     def __len__(self):
-        return len(self.Q)
+        return self.B.shape[0]
 
     def __getitem__(self, idx):
-        force = self.Q[idx] * self.f(self.xx, self.yy)
-        ans = self.Q[idx] * self.u(self.xx, self.yy)
+        b = self.B[idx, :]
+        u = self.U[idx, :].reshape(self.xx.shape[1:])
+        f = self.F[idx, :].reshape(self.xx.shape)
+        data = np.concatenate((self.xx, self.yy, f), axis=0)
 
-        data = np.concatenate((self.xx[np.newaxis,...], self.yy[np.newaxis,...], force[np.newaxis, ...]), axis=0)
+        data = torch.from_numpy(data).to(torch.float32)
+        b = torch.from_numpy(b).to(torch.float32)
+        u = torch.from_numpy(u).to(torch.float32)
 
-        data = torch.from_numpy(data)
-        label = torch.from_numpy(ans)
-        b = torch.from_numpy(self.Q[idx] * self.b)
-
-        return data.to(torch.float32), label.to(torch.float32), b.to(torch.float32)
+        return data, b, u
 
 class LinalgDataModule(pl.LightningDataModule):
-    def __init__(self, b_path, f, u, h,
-                rate=0.99, N=2000, minq=0.5, maxq=1.5, batch_size=4):
+    def __init__(self, train_b, train_u, train_f, val_b, val_u, val_f, N=128, batch_size=4):
         super().__init__()
-        self.f = f
-        self.u = u
-        Q = np.linspace(minq, maxq, N)
-        self.Q = sample(list(Q), N)
-        self.rate = rate
         self.batch_size = batch_size
-        self.b = b_path
-        self.h = h
+        self.B = train_b
+        self.U = train_u
+        self.F = train_f
+        self.valB = val_b
+        self.valU = val_u
+        self.valF = val_f
+        self.N = N
 
-    def setup(self, stage):
-        n = round(self.rate * len(self.Q))    
+    def setup(self, stage):    
         if stage == 'fit' or stage is None:
-            self.train_dataset = LinalgDataset(self.b, self.Q[:n], self.f, self.u, self.h)
-            self.val_dataset = LinalgDataset( self.b, self.Q[n:], self.f, self.u, self.h)
+            self.train_dataset = LinalgDataset(self.B, self.U, self.F, self.N, a=1)
+            self.val_dataset = LinalgDataset(self.valB, self.valU, self.valF, self.N, a=1)
         if stage == 'test':
             pass
 
@@ -367,14 +365,14 @@ class TestDataSet(Dataset):
         return layout3d, layout
 
 if __name__ == '__main__':
-    Q = list(np.arange(0.001, 2.001, 0.001))
-    f = lambda x,y: 8*np.pi**2*np.sin(2*np.pi*x)*np.sin(2*np.pi*y)
-    u = lambda x,y: np.sin(2*np.pi*x)*np.sin(2*np.pi*y) 
-    dataset = LinalgDataset('./b.npy', Q, f, u)
-    x, u, b = dataset[0]
-    print(x.shape)
-    print(u.shape)
+    ds = LinalgDataset('./B2nd.npy', 'U2nd.npy', h=0.01)
+
+    data, b, u = ds[0]
+    print(data.shape)
     print(b.shape)
+    print(u.shape)
+
+
 
 # Sin Data Gen:
     # def f(xx, yy):

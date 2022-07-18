@@ -14,41 +14,43 @@ class LinalgTrainer(pl.LightningModule):
         self.lr = lr
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.A = np2torch(A).to(device)
+        # self.A = self.A.transpose()
 
     def forward(self, x):
         return self.net(x)
 
     def training_step(self, batch, batch_idx):
-        x, u, b = batch
+        x, b, u = batch
+        b = torch.transpose(b, 0, 1)
         y = self(x)
         mean_l2_loss = F.mse_loss(y.squeeze(), u)
 
-        bc = y.size(0)
-        y = y.view((bc, -1, 1))
-        linalg_loss = 0
-        for idx in range(bc):
-            linalg_loss += self.loss(torch.sparse.mm(self.A, y[idx]).squeeze(), b[idx])
-
-        self.log('Train linalg Loss', linalg_loss/bc)
+        y = torch.transpose(torch.flatten(y, 2, 3).squeeze(), 0, 1)       
+        y = torch.sparse.mm(self.A, y)
+        linalg_loss = self.loss(y, b)
+       
+        self.log('Train linalg Loss', linalg_loss)
         self.log('Train Real Loss', mean_l2_loss)
-        return {'loss' : mean_l2_loss}
+        return {'loss' : linalg_loss}
 
     def validation_step(self, batch, batch_idx):
-        x, u, b = batch
+        x, b, u = batch
+        b = torch.transpose(b, 0, 1)
         y = self(x)
+        # print('!!!!!!!!!!!!!!!!!!!!!!!!!', y.shape)
+        pre = y.squeeze().cpu().numpy()
+        mean_l2_loss = F.mse_loss(y.squeeze(), u)
 
-        # print(y.shape, '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-        mean_l2_loss = F.mse_loss(y.squeeze(), u[0])
-
-        y = y.view(-1, 1)
-        linalg_loss = self.loss(torch.sparse.mm(self.A, y), b.view(-1, 1))
+        y = torch.flatten(y, 2, 3).squeeze()[..., None]
+        y = torch.sparse.mm(self.A, y)
+        linalg_loss = self.loss(y, b)
+        
         self.log('Val linalg Loss', linalg_loss)
         self.log('Val Real Loss', mean_l2_loss)
-        
-        y = y.squeeze().cpu().numpy()
-        np.save(self.val_save_path + str(batch_idx), y)
+    
+        np.save(self.val_save_path + str(batch_idx), pre)
 
-        return {'Val linalg Loss': linalg_loss/4, 'Val Real Loss': mean_l2_loss}
+        return {'Val linalg Loss': linalg_loss, 'Val Real Loss': mean_l2_loss}
     
     def test_step(self, batch, batch_idx):
         pass
