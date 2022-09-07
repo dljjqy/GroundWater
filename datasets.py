@@ -1,4 +1,5 @@
 
+from unittest import makeSuite
 import torch
 import pytorch_lightning as pl
 import numpy as np
@@ -110,7 +111,7 @@ def fd_A_with_bc(n, order=2):
         
         idx = i * n + n - 1 
         A[idx, idx] = 1       
-    A = A.tocsr()
+    A = A.tocoo()
     return A
 
 def fd_b_bc(f, h, order=2, g=0):
@@ -179,7 +180,76 @@ def fd_b(f, h, order=2, g=0):
         b *= (h**2/2)
     return b
 
-def generate_data(f, a, bc=False, path='./data/', minQ=0.5, maxQ=2.5, n=130, train_N=500, val_N=5, ax=0):
+def generate_data_bc(f, a, path='./data/', minQ=1, maxQ=2, n=129, train_N=2000, val_N=10, ax=0):
+    p = Path(path)
+    if not p.is_dir():
+        p.mkdir(exist_ok=True)
+    h = (2*a)/(n-1)
+
+    x = np.linspace(-a, a, n)
+    y = np.linspace(-a, a, n)
+    xx, yy = np.meshgrid(x, y)
+
+    mask = np.ones_like(xx)
+    mask[1:-1, 1:-1] *= 0 
+
+    train_Qs = np.linspace(minQ, maxQ, train_N)
+    val_Qs = np.linspace(minQ, maxQ, val_N)
+    
+    if 'normal' in f.__name__:
+        f1_mat = f(xx, yy, h)
+    else:
+        f1_mat = f(xx, yy)
+
+    F = np.array(list(np.stack([xx, yy, q * f1_mat], axis=ax) for q in train_Qs))
+    np.save(path+'F.npy', F)
+    del F
+    
+    ValF = np.array(list(np.stack([xx, yy, q * f1_mat], axis=ax) for q in val_Qs))
+    np.save(path+'ValF.npy', ValF)
+    del ValF
+
+    M = np.array(list(np.stack([mask, q * f1_mat], axis=ax) for q in train_Qs))
+    np.save(path+'M.npy', M)
+    del M
+    
+    ValM = np.array(list(np.stack([mask, q * f1_mat], axis=ax) for q in val_Qs))
+    np.save(path+'ValM.npy', ValM)
+    del ValM
+
+    A2nd_bc = fd_A_with_bc(n, 2)
+    D2nd_bc = ((A2nd_bc - sparse.diags(A2nd_bc.diagonal())) / 4).tocoo()
+    sparse.save_npz(path+'A2nd', A2nd_bc)
+    sparse.save_npz(path+'D2nd', D2nd_bc)
+    del A2nd_bc, D2nd_bc
+
+    A4th_bc = fd_A_with_bc(n, 4)
+    D4th_bc = ((A4th_bc - sparse.diags(A4th_bc.diagonal())) / 20).tocoo()
+    sparse.save_npz(path+'A4th', A4th_bc)
+    sparse.save_npz(path+'D4th', D4th_bc)
+    del A4th_bc, D4th_bc
+
+    b2nd_bc = fd_b_bc(f1_mat, h, 2)
+    B2nd_bc = np.array(list(b2nd_bc * q for q in train_Qs))
+    np.save(path+'B2nd.npy', np.array(B2nd_bc))
+    del B2nd_bc
+
+    b4th_bc = fd_b_bc(f1_mat, h, 4)
+    B4th_bc = np.array(list(b4th_bc * q for q in train_Qs))
+    np.save(path+'B4th.npy', np.array(B4th_bc))
+    del B4th_bc
+
+    valB2nd_bc = np.array(list(b2nd_bc * q for q in val_Qs))
+    np.save(path+'ValB2nd.npy', np.array(valB2nd_bc))
+    del valB2nd_bc
+
+    valB4th_bc = np.array(list(b4th_bc * q for q in val_Qs))
+    np.save(path+'ValB4th.npy', np.array(valB4th_bc))
+    del valB4th_bc
+
+    return True
+
+def generate_data(f, a, bc=False, path='./data/', minQ=1, maxQ=2, n=130, train_N=500, val_N=5, ax=0):
 
     p = Path(path)
     if not p.is_dir():
@@ -201,32 +271,21 @@ def generate_data(f, a, bc=False, path='./data/', minQ=0.5, maxQ=2.5, n=130, tra
     else:
         f1_mat = f(xx, yy)
 
-    f2_mat = f1_mat[1:-1, 1:-1]
+    F = np.array(list(np.stack([xx, yy, q * f1_mat], axis=ax) for q in train_Qs))
+    np.save(path+'F.npy', F)
+    del F
+
+    ValF = np.array(list(np.stack([xx, yy, q * f1_mat], axis=ax) for q in val_Qs))
+    np.save(path+'ValF.npy', ValF)
+    del ValF
+
+    M = np.array(list(np.stack([mask, q * f1_mat], axis=ax) for q in train_Qs))
+    np.save(path+'M.npy', M)
+    del M
     
-    F1 = np.array(list(np.stack([xx, yy, q * f1_mat], axis=ax) for q in train_Qs))
-    np.save(path+'F1.npy', F1)
-    del F1
-    
-    F2 = np.array(list(np.stack([xx[1:-1, 1:-1], yy[1:-1, 1:-1], q * f2_mat], axis=ax) for q in train_Qs))
-    np.save(path+'F2.npy', F2)
-    del F2
-
-    ValF1 = np.array(list(np.stack([xx, yy, q * f1_mat], axis=ax) for q in val_Qs))
-    np.save(path+'ValF1.npy', ValF1)
-    del ValF1
-
-    ValF2 = np.array(list(np.stack([xx[1:-1,1:-1], yy[1:-1, 1:-1],q * f2_mat], axis=ax) for q in val_Qs))
-    np.save(path+'ValF2.npy', ValF2)
-    del ValF2
-
-    M1 = np.array(list(np.stack([mask, q * f1_mat], axis=ax) for q in train_Qs))
-    np.save(path+'M1.npy', M1)
-    del M1
-    
-    ValM1 = np.array(list(np.stack([mask, q * f1_mat], axis=ax) for q in val_Qs))
-    np.save(path+'ValM1.npy', ValM1)
-    del ValM1
-
+    ValM = np.array(list(np.stack([mask, q * f1_mat], axis=ax) for q in val_Qs))
+    np.save(path+'ValM.npy', ValM)
+    del ValM
 
     A2nd = fd_A(n, 2)
     D2nd = ((A2nd - sparse.diags(A2nd.diagonal())) / 4).tocoo()
@@ -234,59 +293,29 @@ def generate_data(f, a, bc=False, path='./data/', minQ=0.5, maxQ=2.5, n=130, tra
     sparse.save_npz(path+'D2nd', D2nd)
     del A2nd, D2nd
 
-    A2nd_bc = fd_A_with_bc(n, 2)
-    D2nd_bc = ((A2nd_bc - sparse.diags(A2nd_bc.diagonal())) / 4).tocoo()
-    sparse.save_npz(path+'A2nd_bc', A2nd_bc)
-    sparse.save_npz(path+'D2nd_bc', D2nd_bc)
-    del A2nd_bc, D2nd_bc
-
     A4th = fd_A(n, 4)
     D4th = ((A4th - sparse.diags(A4th.diagonal())) / 20).tocoo()
     sparse.save_npz(path+'A4th', A4th)
     sparse.save_npz(path+'D4th', D4th)
     del A4th, D4th
 
-    A4th_bc = fd_A_with_bc(n, 4)
-    D4th_bc = ((A4th_bc - sparse.diags(A4th_bc.diagonal())) / 20).tocoo()
-    sparse.save_npz(path+'A4th_bc', A4th_bc)
-    sparse.save_npz(path+'D4th_bc', D4th_bc)
-    del A4th_bc, D4th_bc
-
     b2nd = fd_b(f1_mat, h, 2)
     B2nd = np.array(list(b2nd * q for q in train_Qs))
     np.save(path+'B2nd.npy', np.array(B2nd))
     del B2nd
-
-    b2nd_bc = fd_b_bc(f1_mat, h, 2)
-    B2nd_bc = np.array(list(b2nd_bc * q for q in train_Qs))
-    np.save(path+'B2nd_bc.npy', np.array(B2nd_bc))
-    del B2nd_bc
 
     b4th = fd_b(f1_mat, h, 4)
     B4th = np.array(list(b4th * q for q in train_Qs))
     np.save(path+'B4th.npy', np.array(B4th))
     del B4th
 
-    b4th_bc = fd_b_bc(f1_mat, h, 4)
-    B4th_bc = np.array(list(b4th_bc * q for q in train_Qs))
-    np.save(path+'B4th_bc.npy', np.array(B4th_bc))
-    del B4th_bc
-
     valB2nd = np.array(list(b2nd * q for q in val_Qs))
     np.save(path+'ValB2nd.npy', np.array(valB2nd))
     del valB2nd
 
-    valB2nd_bc = np.array(list(b2nd_bc * q for q in val_Qs))
-    np.save(path+'ValB2nd_bc.npy', np.array(valB2nd_bc))
-    del valB2nd_bc
-
     valB4th = np.array(list(b4th * q for q in val_Qs))
     np.save(path+'ValB4th.npy', np.array(valB4th))
     del valB4th
-
-    valB4th_bc = np.array(list(b4th_bc * q for q in val_Qs))
-    np.save(path+'ValB4th_bc.npy', np.array(valB4th_bc))
-    del valB4th_bc
 
     return True
 
@@ -307,22 +336,20 @@ class MyDataset(Dataset):
         b = torch.from_numpy(b).to(torch.float32)
         return  data, b
 
-data_mode = ['M1.npy', 'F1.npy', 'F2.npy']
-val_data_mode = ['ValM1.npy', 'ValF1.npy', 'ValF2.npy']
+
 class MyDataModule(pl.LightningDataModule):
     
-    def __init__(self, data_path, batch_size, order=2, mode=0):
+    def __init__(self, data_path, batch_size, order=2, mode='F'):
         super().__init__()
+        self.trainF = data_path + mode + '.npy'
+        self.valF = data_path + 'Val' + mode + '.npy'
+
         if order == 2:
             self.trainB = data_path + 'B2nd.npy'
-            self.trainF = data_path + data_mode[mode]
             self.valB = data_path + 'ValB2nd.npy'
-            self.valF = data_path + val_data_mode[mode]
         elif order == 4:
             self.trainB = data_path + 'B4th.npy'
-            self.trainF = data_path + data_mode[mode]
             self.valB = data_path + 'ValB4th.npy'
-            self.valF = data_path + val_data_mode[mode]
         self.batch_size = batch_size
 
     def setup(self, stage):    
@@ -337,7 +364,7 @@ class MyDataModule(pl.LightningDataModule):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=6)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=1, shuffle=False)
+        return DataLoader(self.val_dataset, batch_size=1, shuffle=False, num_workers=6)
     
     def test_dataloader(self):
         pass  
@@ -355,15 +382,22 @@ def np2torch(A_path):
 if __name__ == '__main__':
     yitas = [yita11_2d, yita12_2d, yita22_2d, yita23_2d, yita25_2d, yita2cos_2d]
 
-    generate_data(f=normal, a=1, path='./data/normal259/', minQ=1, maxQ=2, n=259, train_N=2000, val_N=10)
-    generate_data(f=normal, a=1, path='./data/normal131/', minQ=1, maxQ=2, n=131, train_N=2000, val_N=10)
-    generate_data(f=normal, a=1, path='./data/normal67/',  minQ=1, maxQ=2, n=67, train_N=2000, val_N=10)
-    generate_data(f=normal, a=1, path='./data/normal35/', minQ=1, maxQ=2, n=35, train_N=2000, val_N=10)
+    generate_data(f=normal, a=1, path='./data/normal257/', minQ=1, maxQ=2, n=256, train_N=2000, val_N=10)
+    generate_data(f=normal, a=1, path='./data/normal129/', minQ=1, maxQ=2, n=129, train_N=2000, val_N=10)
+    generate_data(f=normal, a=1, path='./data/normal65/',  minQ=1, maxQ=2, n=65, train_N=2000, val_N=10)
+    generate_data(f=normal, a=1, path='./data/normal33/', minQ=1, maxQ=2, n=33, train_N=2000, val_N=10)
 
-    generate_data(f=normal_fourth, a=1, path='./data/4normal259/', minQ=1, maxQ=2, n=259, train_N=2000, val_N=10)
-    generate_data(f=normal_fourth, a=1, path='./data/4normal131/', minQ=1, maxQ=2, n=131, train_N=2000, val_N=10)
-    generate_data(f=normal_fourth, a=1, path='./data/4normal67/',  minQ=1, maxQ=2, n=67, train_N=2000, val_N=10)
-    generate_data(f=normal_fourth, a=1, path='./data/4normal35/', minQ=1, maxQ=2, n=35, train_N=2000, val_N=10)
+    generate_data(f=normal_fourth, a=1, path='./data/4normal257/', minQ=1, maxQ=2, n=256, train_N=2000, val_N=10)
+    generate_data(f=normal_fourth, a=1, path='./data/4normal129/', minQ=1, maxQ=2, n=129, train_N=2000, val_N=10)
+    generate_data(f=normal_fourth, a=1, path='./data/4normal65/',  minQ=1, maxQ=2, n=65, train_N=2000, val_N=10)
+    generate_data(f=normal_fourth, a=1, path='./data/4normal33/', minQ=1, maxQ=2, n=33, train_N=2000, val_N=10)
 
+    generate_data_bc(f=normal, a=1, path='./data/normal257_bc/', minQ=1, maxQ=2, n=256, train_N=2000, val_N=10)
+    generate_data_bc(f=normal, a=1, path='./data/normal129_bc/', minQ=1, maxQ=2, n=129, train_N=2000, val_N=10)
+    generate_data_bc(f=normal, a=1, path='./data/normal65_bc/',  minQ=1, maxQ=2, n=65, train_N=2000, val_N=10)
+    generate_data_bc(f=normal, a=1, path='./data/normal33_bc/', minQ=1, maxQ=2, n=33, train_N=2000, val_N=10)
 
-    
+    generate_data_bc(f=normal_fourth, a=1, path='./data/4normal257_bc/', minQ=1, maxQ=2, n=256, train_N=2000, val_N=10)
+    generate_data_bc(f=normal_fourth, a=1, path='./data/4normal129_bc/', minQ=1, maxQ=2, n=129, train_N=2000, val_N=10)
+    generate_data_bc(f=normal_fourth, a=1, path='./data/4normal65_bc/',  minQ=1, maxQ=2, n=65, train_N=2000, val_N=10)
+    generate_data_bc(f=normal_fourth, a=1, path='./data/4normal33_bc/', minQ=1, maxQ=2, n=33, train_N=2000, val_N=10)

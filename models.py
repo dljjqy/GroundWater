@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as fn
+
 class DoubleConv(nn.Module):
     def __init__(self, inc, outc, padding='same'):
         super().__init__()
@@ -46,35 +47,28 @@ class Attention_block(nn.Module):
         return out
 
 class AttUNet(nn.Module):
-    def __init__(self, in_c=3, out_c=1, features=16, mode=1):
-        '''
-        mode1 ---> F1, mode2 ---> F2
-        '''
+    def __init__(self, in_c=3, out_c=1, features=16, bc=False):
         super().__init__()
-        if mode == 2:
-            self.dconv0 = DoubleConv(in_c, features)
-        elif mode == 1:
-            self.dconv0 = DoubleConv(in_c, features, 'valid')
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.dconv0 = DoubleConv(in_c, features)
         self.dconv1 = DoubleConv(features    , features * 2)
         self.dconv2 = DoubleConv(features * 2, features * 4)
         self.dconv3 = DoubleConv(features * 4, features * 8)
         self.dconv4 = DoubleConv(features * 8, features * 16)
 
-        self.maxpool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.maxpool3 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.maxpool4 = nn.MaxPool2d(kernel_size=2, stride=2)
-
         self.uconv4 = DoubleConv(features *16, features * 8)
         self.uconv3 = DoubleConv(features * 8, features * 4)
         self.uconv2 = DoubleConv(features * 4, features * 2)
         self.uconv1 = DoubleConv(features * 2, features)
-        self.final  = DoubleConv(features, out_c)
+        if bc:
+            self.final = nn.Conv2d(features, out_c, (3, 3), (1, 1), 'same')
+        else:
+            self.final = nn.Conv2d(features, out_c, (3, 3), (1, 1), 'valid')
 
-        self.up4 = nn.ConvTranspose2d(features * 16, features * 8, (4, 4), (2, 2), 1)
-        self.up3 = nn.ConvTranspose2d(features * 8,  features * 4, (4, 4), (2, 2), 1)
-        self.up2 = nn.ConvTranspose2d(features * 4,  features * 2, (4, 4), (2, 2), 1)
-        self.up1 = nn.ConvTranspose2d(features * 2,  features * 1, (3, 3), (2, 2), 0)
+        self.up4 = nn.ConvTranspose2d(features * 16, features * 8, (2, 2), (2, 2))
+        self.up3 = nn.ConvTranspose2d(features * 8,  features * 4, (2, 2), (2, 2))
+        self.up2 = nn.ConvTranspose2d(features * 4,  features * 2, (2, 2), (2, 2))
+        self.up1 = nn.ConvTranspose2d(features * 2,  features * 1, (3, 3), (2, 2))
 
         self.ag1 = Attention_block(features * 8, features * 8, features * 4)
         self.ag2 = Attention_block(features * 4, features * 4, features * 2)
@@ -84,10 +78,10 @@ class AttUNet(nn.Module):
 
     def forward(self, x):
         x1 = self.dconv0(x)
-        x2 = self.dconv1(self.maxpool1(x1))
-        x3 = self.dconv2(self.maxpool2(x2)) 
-        x4 = self.dconv3(self.maxpool3(x3)) 
-        x5 = self.dconv4(self.maxpool4(x4)) 
+        x2 = self.dconv1(self.maxpool(x1))
+        x3 = self.dconv2(self.maxpool(x2)) 
+        x4 = self.dconv3(self.maxpool(x3)) 
+        x5 = self.dconv4(self.maxpool(x4)) 
         y = self.up4(x5)
         y = self.uconv4(torch.cat([self.ag1(g=y, x=x4), y], 1))
         y = self.up3(y)
@@ -101,29 +95,19 @@ class AttUNet(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, in_c=3, out_c=1, features=16, mode=1):
+    def __init__(self, in_c=3, out_c=1, features=16, bc=False):
         '''
         mode1 ---> F1, mode2 ---> F2
         '''
         super().__init__()
-        if mode == 2:
-            self.dconv0 = DoubleConv(in_c, features)
-        elif mode == 1:
-            self.dconv0 = DoubleConv(in_c, features, 'valid')
-        self.pool0 = nn.MaxPool2d((2, 2), (2, 2))
+        self.maxpool = nn.MaxPool2d((2, 2), (2, 2))
 
+        self.dconv0 = DoubleConv(in_c, features)
         self.dconv1 = DoubleConv(features, features * 2)
-        self.pool1 = nn.MaxPool2d((2, 2), (2, 2))
-        
         self.dconv2 = DoubleConv(features * 2, features * 4)
-        self.pool2 = nn.MaxPool2d((2, 2), (2, 2))
-        
         self.dconv3 = DoubleConv(features * 4, features * 8)
-        self.pool3 = nn.MaxPool2d((2, 2), (2, 2))
-
         self.dconv4 = DoubleConv(features * 8, features * 16)
-        self.pool4 = nn.MaxPool2d((2, 2), (2, 2))
-
+        
         self.up4 = nn.ConvTranspose2d(features * 16, features * 8, (2, 2), (2, 2))
         self.up3 = nn.ConvTranspose2d(features * 8,  features * 4, (2, 2), (2, 2))
         self.up2 = nn.ConvTranspose2d(features * 4,  features * 2, (2, 2), (2, 2))
@@ -134,14 +118,17 @@ class UNet(nn.Module):
         self.uconv1 = DoubleConv(features * 4, features * 2)
         self.uconv0 = DoubleConv(features * 2, features * 1)
 
-        self.final = nn.Conv2d(features, out_c, (3, 3), (1, 1), 'same')
+        if bc:
+            self.final = nn.Conv2d(features, out_c, (3, 3), (1, 1), 'same')
+        else:
+            self.final = nn.Conv2d(features, out_c, (3, 3), (1, 1), 'valid')
 
     def forward(self , x):
         x0 = self.dconv0(x)
-        x1 = self.dconv1(self.pool0(x0))
-        x2 = self.dconv2(self.pool1(x1))
-        x3 = self.dconv3(self.pool2(x2))
-        x4 = self.dconv4(self.pool3(x3))
+        x1 = self.dconv1(self.maxpool(x0))
+        x2 = self.dconv2(self.maxpool(x1))
+        x3 = self.dconv3(self.maxpool(x2))
+        x4 = self.dconv4(self.maxpool(x3))
 
         y = self.uconv3(torch.cat([self.up4(x4),x3], 1))
         y = self.uconv2(torch.cat([self.up3(y), x2], 1))
@@ -150,10 +137,13 @@ class UNet(nn.Module):
         y = self.final(y)
         return y
 
+# Do not delete it
+model_names = {'UNet': UNet, 'AttUNet': AttUNet}
+
 if __name__ == '__main__':
-    x = torch.rand(4, 3, 131, 131)
-    net1 = UNet(3, 1, 2, 1)
-    net2 = AttUNet(3, 1, 2, 1)
+    x = torch.rand(4, 3, 65, 65)
+    net1 = UNet(3, 1, 2)
+    net2 = AttUNet(3, 1, 2)
 
     print(net1(x).shape)
     print(net2(x).shape)

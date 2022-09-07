@@ -39,7 +39,7 @@ def mse_loss(x, A, b):
     return F.mse_loss(Ax, b)
 
 
-class Trainer(pl.LightningModule):
+class pl_Model(pl.LightningModule):
     def __init__(self, loss, net, val_save_path='./u/', data_path='./data/', lr=1e-2, order=2):
         self.val_save_path = Path(val_save_path)
         super().__init__()
@@ -47,11 +47,11 @@ class Trainer(pl.LightningModule):
         self.net = net
         self.lr = lr
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
         if order == 2:
             self.D = np2torch(data_path+'D2nd.npz').to(device)
             self.A = np2torch(data_path+'A2nd.npz').to(device)
             self.order = 4
-
         elif order == 4:
             self.D = np2torch(data_path+'D4th.npz').to(device)
             self.A = np2torch(data_path+'A4th.npz').to(device)
@@ -66,7 +66,6 @@ class Trainer(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, b = batch
         y = self(x)
-
         y = y.flatten(1, 3)
         with torch.no_grad():
             rhs = self.rhs(y, b)
@@ -84,7 +83,7 @@ class Trainer(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, b = batch
         y = self(x)
-        np.save(str(self.val_save_path) +'/' +str(batch_idx), y.squeeze().cpu().numpy())
+        np.save(f'{self.val_save_path}/{batch_idx}', y.squeeze().cpu().numpy())
 
         y = torch.flatten(y, 1, 3)
         rhs = self.rhs(y, b)
@@ -116,9 +115,9 @@ class Trainer(pl.LightningModule):
         return [optimizer], [lr_scheduler]
 
 
-class TrainerLbfgs(Trainer):
+class pl_lbfgs_Model(pl_Model):
     def __init__(self, *args, **kwargs):
-        super(TrainerLbfgs, self).__init__(*args, **kwargs)
+        super(pl_lbfgs_Model, self).__init__(*args, **kwargs)
         self.automatic_optimization = False
     
     def training_step(self, batch, batch_idx):
