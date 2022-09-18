@@ -1,10 +1,43 @@
+from turtle import forward
 import torch
 import pytorch_lightning as pl
 import torch.nn.functional as F
 import numpy as np
-from datasets import np2torch
 from pathlib import Path
 from lbfgsnew import LBFGSNew
+from scipy import sparse
+
+def np2torch(A_path):
+    A = sparse.load_npz(A_path)
+    values = A.data
+    indices = np.vstack((A.row, A.col))
+    i = torch.LongTensor(indices)
+    v = torch.FloatTensor(values)
+    shape = A.shape
+    del A
+    return torch.sparse.FloatTensor(i, v, torch.Size(shape)).to(torch.float32)
+
+def pad_neu_bc(x, h, pad=(1, 1, 0, 0), g = 0):
+    val = 2 * h * g
+    x = F.pad(x, pad=pad, mode='reflect')
+    
+    if pad == (1, 1, 0, 0):
+        x[..., :, 0] -= val
+        x[..., :,-1] -= val
+    elif pad == (0, 0, 1, 1):
+        x[..., 0, :] -= val
+        x[...,-1, :] -= val
+    return x
+
+def pad_diri_bc(x, pad=(0, 0, 1, 1), g = 0):
+    x = F.pad(x, pad=pad, mode='constant', value=g)
+    return x
+
+def conv_rhs(x):
+    kernel = torch.tensor([[[[0, -1, 0], [-1, 4, -1], [0, -1, 0]]]])
+    kernel = kernel.type_as(x)
+    return F.conv2d(x, kernel)
+
 def gradient_descent(x, A, b):
     r = matrix_batched_vectors_multipy(A, x) - b
     Ar = matrix_batched_vectors_multipy(A, r)
@@ -36,7 +69,61 @@ def energy(x, A, b):
 
 def mse_loss(x, A, b):
     Ax = matrix_batched_vectors_multipy(A, x)
-    return F.mse_loss(Ax, b)
+    return F.mse_loss(Ax, b) 
+
+def diri_rhs(x, f, h,g=0):
+    '''
+    All boundaries are Dirichlet type.
+    Netwotk should output prediction without boundary points.(N-2 x N-2)
+    '''
+    x = pad_diri_bc(x, pad=(1, 1, 1, 1), g=g)
+    rhs = conv_rhs(x)
+    return rhs - h*h*f[..., 1:-1, 1:-1]
+
+def neu_rhs(x, f, h, g_n=0):
+    '''
+    Left,right boundary are neumann type.
+    Top,bottom boundary are dirichlet type.
+    Network should output prediction with boundary points.(N x N)
+    '''
+    x = pad_neu_bc(x, h, pad=(1, 1, 0, 0), g=g_n)
+    rhs = conv_rhs(x)
+    return rhs - h*h*f[..., 1:-1, :]
+
+
+class pl_conv_model(pl.LightningModule):
+    def __init__(self, loss, net, rhs, lr, h):
+        super().__init__()
+        self.loss = loss
+        self.net = net
+        self.lr = lr
+        self.rhs = rhs
+        self.h = h
+
+    def forward(self, x):
+        return self.net(x)
+
+    def training_step(self, batch, batch_idx):
+        x, f = batch
+        y = self(x)
+        with torch.no_grad():
+            diff = self.rhs(y, f)
+        loss = self.loss(diff, torch.zeros_like(diff))
+        self.log('loss', loss)
+        return {'loss': loss}
+
+    def validation_step(self, batch, batch_idx):
+        tensorboard = self.logger.experiment
+        
+        tensorboard.add_image()
+
+        x, f = batch
+        y = self(x)
+        diff = self.rhs(y, f)
+        loss = self.loss(diff, torch.zeros_like(diff))
+        
+        self.log('val loss', loss)
+        return {'val loss': loss}
 
 
 class pl_Model(pl.LightningModule):
@@ -69,16 +156,28 @@ class pl_Model(pl.LightningModule):
         y = y.flatten(1, 3)
         with torch.no_grad():
             rhs = self.rhs(y, b)
-            energy_loss = energy(y, self.A, b)
+            # energy_loss = energy(y, self.A, b)
+            jacobian_loss = self.loss(y, rhs)
             mse_linalg_loss = mse_loss(y, self.A, b)
-        jacobian_loss = self.loss(y, rhs)
+        energy_loss = energy(y, self.A, b)
+        
+
+        parameters = [p for p in self.net.parameters() if p.grad is not None and p.requires_grad]
+        if len(parameters) == 0:
+            total_norm = 0.0
+        else:
+            device = parameters[0].grad.device
+            total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), 2).to(device) for p in parameters]), 2.0).item()
 
         self.log_dict({
             'Jacobian Iteration l1 Loss': jacobian_loss,
             'Mean Energy Loss':energy_loss,
-            'MSE Linalg Loss':mse_linalg_loss
+            'MSE Linalg Loss':mse_linalg_loss,
+            'Grad Norm':total_norm
         })
-        return {'loss' : jacobian_loss}
+
+        # return {'loss' : jacobian_loss}
+        return {'loss' : energy_loss}
 
     def validation_step(self, batch, batch_idx):
         x, b = batch
@@ -113,7 +212,6 @@ class pl_Model(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.85)
         return [optimizer], [lr_scheduler]
-
 
 class pl_lbfgs_Model(pl_Model):
     def __init__(self, *args, **kwargs):

@@ -22,27 +22,29 @@ class Attention_block(nn.Module):
         super(Attention_block, self).__init__()
         self.w_g = nn.Sequential(
             nn.Conv2d(F_g, F_init, kernel_size=1, stride=1, padding=0, bias=True),
-            nn.BatchNorm2d(F_init)
+            nn.BatchNorm2d(F_init),
+            nn.ReLU()
         )
 
         self.w_x = nn.Sequential(
             nn.Conv2d(F_l, F_init, kernel_size=1, stride=1, padding=0, bias=True),
-            nn.BatchNorm2d(F_init)
+            nn.BatchNorm2d(F_init),
+            nn.ReLU()
         )
 
         self.psi = nn.Sequential(
             nn.Conv2d(F_init, 1, kernel_size=1, stride=1, padding=0, bias=True),
             nn.BatchNorm2d(1),
             nn.Sigmoid()
+            # nn.ReLU()
         )
 
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
 
     def forward(self, g, x):
         g1 = self.w_g(g)
         x1 = self.w_x(x)
-        psi = self.relu(g1 + x1)
-        psi = self.psi(psi)
+        psi = self.psi(g1 + x1)
         out = x * psi
         return out
 
@@ -60,6 +62,7 @@ class AttUNet(nn.Module):
         self.uconv3 = DoubleConv(features * 8, features * 4)
         self.uconv2 = DoubleConv(features * 4, features * 2)
         self.uconv1 = DoubleConv(features * 2, features)
+
         if bc:
             self.final = nn.Conv2d(features, out_c, (3, 3), (1, 1), 'same')
         else:
@@ -81,16 +84,25 @@ class AttUNet(nn.Module):
         x2 = self.dconv1(self.maxpool(x1))
         x3 = self.dconv2(self.maxpool(x2)) 
         x4 = self.dconv3(self.maxpool(x3)) 
-        x5 = self.dconv4(self.maxpool(x4)) 
+        x5 = self.dconv4(self.maxpool(x4))
+
         y = self.up4(x5)
-        y = self.uconv4(torch.cat([self.ag1(g=y, x=x4), y], 1))
+        g= self.ag1(g=y, x=x4)
+        y = self.uconv4(torch.cat([g, y], 1))
+
         y = self.up3(y)
-        y = self.uconv3(torch.cat([self.ag2(g=y, x=x3), y], 1))
+        g = self.ag2(g=y, x=x3)
+        y = self.uconv3(torch.cat([g, y], 1))
+
         y = self.up2(y)
-        y = self.uconv2(torch.cat([self.ag3(g=y, x=x2), y], 1))
+        g = self.ag3(g=y, x=x2)
+        y = self.uconv2(torch.cat([g, y], 1))
+
         y = self.up1(y)
-        y = self.uconv1(torch.cat([self.ag4(g=y, x=x1), y], 1))
+        g = self.ag4(g=y, x=x1)
+        y = self.uconv1(torch.cat([g, y], 1))
         y = self.final(y)
+
         return y
 
 
