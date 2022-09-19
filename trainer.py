@@ -1,11 +1,12 @@
-from turtle import forward
 import torch
 import pytorch_lightning as pl
 import torch.nn.functional as F
 import numpy as np
+import matplotlib.pyplot as plt
 from pathlib import Path
 from lbfgsnew import LBFGSNew
 from scipy import sparse
+from matplotlib import cm
 
 def np2torch(A_path):
     A = sparse.load_npz(A_path)
@@ -34,7 +35,7 @@ def pad_diri_bc(x, pad=(0, 0, 1, 1), g = 0):
     return x
 
 def conv_rhs(x):
-    kernel = torch.tensor([[[[0, -1, 0], [-1, 4, -1], [0, -1, 0]]]])
+    kernel = torch.tensor([[[[0, 0.25, 0], [0.25, 0, 0.25], [0, 0.25, 0]]]])
     kernel = kernel.type_as(x)
     return F.conv2d(x, kernel)
 
@@ -71,60 +72,90 @@ def mse_loss(x, A, b):
     Ax = matrix_batched_vectors_multipy(A, x)
     return F.mse_loss(Ax, b) 
 
-def diri_rhs(x, f, h,g=0):
+def diri_rhs(x, f, h, g=0):
     '''
     All boundaries are Dirichlet type.
     Netwotk should output prediction without boundary points.(N-2 x N-2)
     '''
     x = pad_diri_bc(x, pad=(1, 1, 1, 1), g=g)
     rhs = conv_rhs(x)
-    return rhs - h*h*f[..., 1:-1, 1:-1]
+    return rhs + h*h*f[..., 1:-1, 1:-1]
 
-def neu_rhs(x, f, h, g_n=0):
+def neu_rhs(x, f, h, g_n=0, g_d=0):
     '''
     Left,right boundary are neumann type.
     Top,bottom boundary are dirichlet type.
     Network should output prediction with boundary points.(N x N)
     '''
     x = pad_neu_bc(x, h, pad=(1, 1, 0, 0), g=g_n)
+    x = pad_diri_bc(x, (0, 0, 1, 1), g=g_d)
     rhs = conv_rhs(x)
-    return rhs - h*h*f[..., 1:-1, :]
+    return rhs + h*h*f[...,1:-1, 1:-1]
 
 
 class pl_conv_model(pl.LightningModule):
-    def __init__(self, loss, net, rhs, lr, h):
+    def __init__(self, loss, net, rhs, lr, N, a):
         super().__init__()
         self.loss = loss
         self.net = net
         self.lr = lr
         self.rhs = rhs
-        self.h = h
+        self.h = 2*a / (N - 1)
+
+        x = np.linspace(-a, a, N)
+        y = np.linspace(-a, a, N)
+        self.x, self.y = np.meshgrid(x, y)
+        self.x = self.x[1:-1, 1:-1]
+        self.y = self.y[1:-1, 1:-1]
+
+
+        self.fig = plt.figure()
+        self.ax1 = self.fig.add_subplot(1, 2, 1, projection='3d')
+        self.ax2 = self.fig.add_subplot(1, 2, 2)
+        
+        del x, y
 
     def forward(self, x):
         return self.net(x)
 
     def training_step(self, batch, batch_idx):
-        x, f = batch
-        y = self(x)
+        x, _ = batch
+        f = x[:, -1:, ...]
+        # print(f.shape)
+        u = self(x)
         with torch.no_grad():
-            diff = self.rhs(y, f)
-        loss = self.loss(diff, torch.zeros_like(diff))
+            rhs = self.rhs(u, f, self.h)
+        
+        loss = self.loss(u, rhs)
         self.log('loss', loss)
         return {'loss': loss}
 
     def validation_step(self, batch, batch_idx):
-        tensorboard = self.logger.experiment
-        
-        tensorboard.add_image()
+        x, _ = batch
+        f = x[:, -1:, ...]
 
-        x, f = batch
-        y = self(x)
-        diff = self.rhs(y, f)
-        loss = self.loss(diff, torch.zeros_like(diff))
+        u = self(x)
+        rhs = self.rhs(u, f, self.h)
+        loss = self.loss(u, rhs)
+        diff = torch.abs(u-rhs)
+        if self.current_epoch % 5 == 0:
+            u = u.cpu().numpy().reshape(self.x.shape)
+            diff = diff.cpu().numpy().reshape(self.x.shape)
+            surf = self.ax1.plot_surface(self.x, self.y, u, cmap=cm.coolwarm)
+            im = self.ax2.imshow(diff, cmap='jet')
+            tensorboard = self.logger.experiment
+            tensorboard.add_figure(tag = 'surf&diff', figure=self.fig, global_step=self.current_epoch)
         
         self.log('val loss', loss)
         return {'val loss': loss}
 
+    def test_step(self, batch, batch_idx):
+        pass
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.85)
+        return [optimizer], [lr_scheduler]
 
 class pl_Model(pl.LightningModule):
     def __init__(self, loss, net, val_save_path='./u/', data_path='./data/', lr=1e-2, order=2):

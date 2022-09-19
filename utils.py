@@ -9,7 +9,7 @@ from scipy.stats import multivariate_normal
 from pytorch_lightning.loggers import TensorBoardLogger
 from datasets import MyDataModule
 from models import model_names
-from trainer import pl_Model, pl_lbfgs_Model
+from trainer import diri_rhs, neu_rhs, pl_Model, pl_conv_model, pl_lbfgs_Model
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pathlib import Path
 
@@ -225,9 +225,9 @@ def apply_dirichlet_bc(b, bc, g, order=2):
             b[-1] -= g
     return b
 
-def gen_hyper_dict(gridSize, batch_size, order, mode, net, features, four=False,
-                    label='jac', lr=1e-3, bc=False, max_epochs=80, ckpt=False, lbfgs=False):
-    exp_name = f'{mode:s}_{gridSize}_{net}_{features}_bs{batch_size}_{label}_order{order}_lr{lr:.0e}'
+def gen_hyper_dict(gridSize, batch_size, mode, net, features, four=False, neu=False,
+                    label='jac', lr=1e-3, bc=False, max_epochs=80, ckpt=False, conv=False, a=1):
+    exp_name = f'{mode:s}_{gridSize}_{net}_{features}_bs{batch_size}_{label}_lr{lr:.0e}'
     data_name = f'normal{gridSize}'
     
     if bc:
@@ -242,22 +242,30 @@ def gen_hyper_dict(gridSize, batch_size, order, mode, net, features, four=False,
     in_c = 3 if mode == 'F' else 2
 
     model = model_names[net](in_c, 1, features, bc)
-    if lbfgs:
-        exp_name = 'lbfgs_' + exp_name
+    if conv:
+        exp_name = 'conv_' + exp_name
 
     if ckpt:
         exp_name = 'resume_' + exp_name
 
     dc = {'max_epochs':max_epochs, 'precision':32, 'check_val_every_n_epoch':1, 'ckpt_path':ckpt, 'mode':'fit', 'gpus':1}
-    dc['pl_dataModule'] = MyDataModule(data_path, batch_size, order, mode)
-    dc['check_point'] = ModelCheckpoint(monitor = 'Val Jacobian Iteration l1 Loss', mode = 'min', every_n_train_steps = 0, 
+    dc['pl_dataModule'] = MyDataModule(data_path, batch_size, 2, mode)
+    # dc['check_point'] = ModelCheckpoint(monitor = 'Val Jacobian Iteration l1 Loss', mode = 'min', every_n_train_steps = 0, 
+    #                         every_n_epochs = 1, train_time_interval = None, save_top_k = 3, save_last = True,)
+    dc['check_point'] = ModelCheckpoint(monitor = 'val loss', mode = 'min', every_n_train_steps = 0, 
                             every_n_epochs = 1, train_time_interval = None, save_top_k = 3, save_last = True,)
+    
+    
     dc['logger'] = TensorBoardLogger('./lightning_logs/', exp_name)
     
-    if  lbfgs:
-        dc['pl_model'] = pl_lbfgs_Model(F.l1_loss, model, f'./valu/{exp_name}/', data_path, lr, order)
+    if conv:
+        if neu:
+            dc['pl_model'] = pl_conv_model(F.l1_loss, model, neu_rhs, lr, gridSize, a)
+        else:
+            dc['pl_model'] = pl_conv_model(F.l1_loss, model, diri_rhs, lr, gridSize, a)
+
     else:
-        dc['pl_model'] = pl_Model(F.l1_loss, model, f'./valu/{exp_name}/', data_path, lr, order)
+        dc['pl_model'] = pl_Model(F.l1_loss, model, f'./valu/{exp_name}/', data_path, lr, 2)
 
     if ckpt:
         parameters = torch.load(ckpt)
